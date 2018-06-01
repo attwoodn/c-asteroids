@@ -7,6 +7,7 @@
  */
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <math.h>
@@ -24,7 +25,7 @@
 #define myRotate2D(angle) glRotatef(RAD2DEG*angle, 0.0, 0.0, 1.0)
 
 
-#define MAX_PHOTONS	8
+#define MAX_PHOTONS	    8
 #define MAX_ASTEROIDS	8
 #define MAX_VERTICES	16
 
@@ -57,7 +58,7 @@ typedef struct Coords {
 } Coords;
 
 typedef struct {
-	double	x, y, phi, dx, dy;
+	double	x, y, phi, dx, dy, radius;
 } Ship;
 
 typedef struct {
@@ -93,7 +94,8 @@ static double	myRandom(double min, double max);
 /* -- global variables ------------------------------------------------------ */
 
 static int	up=0, down=0, left=0, right=0;	/* state of cursor keys */
-static double	xMax, yMax;
+static double xMax, yMax;
+static float timer;
 static Ship	ship;
 static Photon	photons[MAX_PHOTONS];
 static Asteroid	asteroids[MAX_ASTEROIDS];
@@ -108,7 +110,7 @@ main(int argc, char *argv[])
 
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE|GLUT_RGB);
-    glutInitWindowSize(500, 300);
+    glutInitWindowSize(800, 600);
     glutCreateWindow("Asteroids");
     buildCircle();
     glutDisplayFunc(myDisplay);
@@ -173,6 +175,60 @@ myTimer(int value)
 
     /* test for and handle collisions */
 
+    timer += 33;
+
+    if (timer >= 1000){
+        printf("ship coords: (%.2f, %.2f)\n", ship.x, ship.y);
+        printf("direction: %.2f\n", ship.phi);
+        printf("dx: %.2f\n", ship.dx);
+        printf("dy: %.2f\n", ship.dy);
+        printf("\n\n");
+        timer -= 1000;
+    }
+
+
+    /****   update ship   ****/
+
+    ship.x = ship.x + ship.dx*33;
+    ship.y = ship.y + ship.dy*33;
+
+    if (ship.x > xMax){
+        ship.x = 0;
+    }
+
+    if (ship.y > yMax){
+        ship.y = 0;
+    }
+
+
+    /****   process user input   ****/
+
+    if (right == 1){
+        ship.phi -= 2.6;
+        if (ship.phi < 0.0){
+            ship.phi += 360.0;
+        }
+    }
+
+    if (left == 1){
+        ship.phi += 2.6;
+        if (ship.phi > 360.0){
+            ship.phi -= 360.0;
+        }
+    }
+
+    if (up == 1){
+        ship.dx = ship.dx - (0.00002 * sin((ship.phi - 90.0) * DEG2RAD) * 33);
+        ship.dy = ship.dy + (0.00002 * cos((ship.phi - 90.0) * DEG2RAD) * 33); 
+    }
+
+    if (down == 1){
+        ship.dx = ship.dx + (0.00002 * sin((ship.phi - 90.0) * DEG2RAD) * 33);
+        ship.dy = ship.dy - (0.00002 * cos((ship.phi - 90.0) * DEG2RAD) * 33); 
+    }
+
+
+
     glutPostRedisplay();
     
     glutTimerFunc(33, myTimer, value);		/* 30 frames per second */
@@ -201,7 +257,7 @@ keyPress(int key, int x, int y)
             left = 1; break;
         case 101:
             up = 1; break;
-	case 102:
+	    case 102:
             right = 1; break;
         case 103:
             down = 1; break;
@@ -222,7 +278,7 @@ keyRelease(int key, int x, int y)
             left = 0; break;
         case 101:
             up = 0; break;
-	case 102:
+	    case 102:
             right = 0; break;
         case 103:
             down = 0; break;
@@ -261,11 +317,12 @@ init()
      * ship's coordinates and velocity, etc.
      */
 
-    ship.x = 0.5;
-    ship.y = 0.5;
+    ship.x = 50.0;
+    ship.y = 50.0;
     ship.dx = 0.0;
     ship.dy = 0.0;
-    ship.phi = 0.0;
+    ship.phi = 90.0;
+    ship.radius = 2.5;
 }
 
 void
@@ -291,12 +348,12 @@ initAsteroid(
     a->dphi = myRandom(-0.2, 0.2);
     
     a->nVertices = 6+rand()%(MAX_VERTICES-6);
-    for (i=0; i<a->nVertices; i++)
-    {
-	theta = 2.0*M_PI*i/a->nVertices;
-	r = size*myRandom(2.0, 3.0);
-	a->coords[i].x = -r*sin(theta);
-	a->coords[i].y = r*cos(theta);
+    
+    for (i=0; i<a->nVertices; i++) {
+	   theta = 2.0*M_PI*i/a->nVertices;
+	   r = size*myRandom(2.0, 3.0);
+	   a->coords[i].x = -r*sin(theta);
+	   a->coords[i].y = r*cos(theta);
     }
     
     a->active = 1;
@@ -304,6 +361,27 @@ initAsteroid(
 
 void
 drawShip(Ship *s) {
+
+    float xVertex, yVertex;
+    float t1 = (0.0f+s->phi) * DEG2RAD, 
+          t2 = (135.0f+s->phi) * DEG2RAD, 
+          t3 = (225.0f+s->phi) * DEG2RAD; 
+
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glBegin(GL_LINE_LOOP);
+    xVertex = s->x + (s->radius * cos(t1));
+    yVertex = s->y + (s->radius * sin(t1));
+    glVertex2f(xVertex, yVertex);
+
+    xVertex = s->x + (s->radius * cos(t2));
+    yVertex = s->y + (s->radius * sin(t2));
+    glVertex2f(xVertex, yVertex);
+
+    xVertex = s->x + (s->radius * cos(t3));
+    yVertex = s->y + (s->radius * sin(t3));
+    glVertex2f(xVertex, yVertex);
+
+    glEnd();
 }
 
 void
