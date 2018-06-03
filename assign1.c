@@ -4,6 +4,14 @@
  *  Noah Attwood
  *  B00718872
  *  CSCI 3161
+
+ todo:
+    make ship enter the screen based on its velocity direction in which it left the screen. 
+        Do ray casting to trace reverse of position until the ray is out of bounds and then use that position?
+
+    ship projectiles leaving at the same direction as the ship is facing
+
+    circular asteroids
  */
 
 #include <stdlib.h>
@@ -24,7 +32,9 @@
 #define myScale2D(x,y) glScalef(x, y, 1.0)
 #define myRotate2D(angle) glRotatef(RAD2DEG*angle, 0.0, 0.0, 1.0)
 
+#define TIME_DELTA      33
 
+#define MAX_VELOCITY    0.1
 #define MAX_PHOTONS	    8
 #define MAX_ASTEROIDS	8
 #define MAX_VERTICES	16
@@ -54,21 +64,21 @@ buildCircle() {
 /* -- type definitions ------------------------------------------------------ */
 
 typedef struct Coords {
-	double		x, y;
+	double x, y;
 } Coords;
 
 typedef struct {
-	double	x, y, phi, dx, dy, radius;
+	double x, y, phi, dx, dy, radius, turnSpeed, acceleration;
 } Ship;
 
 typedef struct {
 	int	active;
-	double	x, y, dx, dy;
+	double x, y, dx, dy, phi;
 } Photon;
 
 typedef struct {
 	int	active, nVertices;
-	double	x, y, phi, dx, dy, dphi;
+	double x, y, phi, dx, dy, dphi;
 	Coords	coords[MAX_VERTICES];
 } Asteroid;
 
@@ -88,12 +98,14 @@ static void	drawShip(Ship *s);
 static void	drawPhoton(Photon *p);
 static void	drawAsteroid(Asteroid *a);
 
-static double	myRandom(double min, double max);
+static double myRandom(double min, double max);
+
+static double clamp(double value, double min, double max);
 
 
 /* -- global variables ------------------------------------------------------ */
 
-static int	up=0, down=0, left=0, right=0;	/* state of cursor keys */
+static int	up = 0, down = 0, left = 0, right = 0, firing = 0; // state of user input
 static double xMax, yMax;
 static float timer;
 static Ship	ship;
@@ -175,7 +187,7 @@ myTimer(int value)
 
     /* test for and handle collisions */
 
-    timer += 33;
+    timer += TIME_DELTA;
 
     if (timer >= 1000){
         printf("ship coords: (%.2f, %.2f)\n", ship.x, ship.y);
@@ -187,51 +199,76 @@ myTimer(int value)
     }
 
 
-    /****   update ship   ****/
+    /****   update ship position  ****/
 
-    ship.x = ship.x + ship.dx*33;
-    ship.y = ship.y + ship.dy*33;
+    ship.x = ship.x + ship.dx*TIME_DELTA;
+    ship.y = ship.y + ship.dy*TIME_DELTA;
 
-    if (ship.x > xMax){
-        ship.x = 0;
-    }
+    // check if ship left the screen
+    if (ship.x > xMax || ship.x < 0.0 || ship.y > yMax || ship.y < 0.0){
+        // set the ship's new position on the screen dependent on their velocity
 
-    if (ship.y > yMax){
-        ship.y = 0;
+        double collisionCheckX = clamp(ship.x, 0.0, xMax);
+        double collisionCheckY = clamp(ship.y, 0.0, yMax);
+
+        while (collisionCheckX <= xMax && collisionCheckX >= 0 && collisionCheckY <= yMax && collisionCheckY >= 0){
+            collisionCheckX -= ship.dx*2;
+            collisionCheckY -= ship.dy*2;
+        }
+
+        collisionCheckX = clamp(collisionCheckX, 0.0, xMax);
+        collisionCheckY = clamp(collisionCheckY, 0.0, yMax);
+
+        ship.x = collisionCheckX;
+        ship.y = collisionCheckY;
     }
 
 
     /****   process user input   ****/
 
     if (right == 1){
-        ship.phi -= 2.6;
+        ship.phi -= ship.turnSpeed;
         if (ship.phi < 0.0){
             ship.phi += 360.0;
         }
     }
 
     if (left == 1){
-        ship.phi += 2.6;
+        ship.phi += ship.turnSpeed;
         if (ship.phi > 360.0){
             ship.phi -= 360.0;
         }
     }
 
     if (up == 1){
-        ship.dx = ship.dx - (0.00002 * sin((ship.phi - 90.0) * DEG2RAD) * 33);
-        ship.dy = ship.dy + (0.00002 * cos((ship.phi - 90.0) * DEG2RAD) * 33); 
+        double newDx = ship.dx - (ship.acceleration * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+        double newDy = ship.dy + (ship.acceleration * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+
+        if (sqrt(pow(newDx, 2) + pow(newDy, 2)) < MAX_VELOCITY){
+            ship.dx = newDx;
+            ship.dy = newDy;
+        }
     }
 
     if (down == 1){
-        ship.dx = ship.dx + (0.00002 * sin((ship.phi - 90.0) * DEG2RAD) * 33);
-        ship.dy = ship.dy - (0.00002 * cos((ship.phi - 90.0) * DEG2RAD) * 33); 
+        double newDx = ship.dx + ((ship.acceleration/1.5) * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+        double newDy = ship.dy - ((ship.acceleration/1.5) * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+
+        if (sqrt(pow(newDx, 2) + pow(newDy, 2)) < MAX_VELOCITY){
+            ship.dx = newDx;
+            ship.dy = newDy;
+        }
     }
-
-
 
     glutPostRedisplay();
     
-    glutTimerFunc(33, myTimer, value);		/* 30 frames per second */
+    glutTimerFunc(TIME_DELTA, myTimer, value);		/* 30 frames per second */
+}
+
+double clamp (double value, double min, double max){
+    value = value <= max ? value : max;
+    value = value >= min ? value : min;
+    return value;
 }
 
 void
@@ -241,6 +278,13 @@ myKey(unsigned char key, int x, int y)
      *	keyboard callback function; add code here for firing the laser,
      *	starting and/or pausing the game, etc.
      */
+
+    switch(key){
+        case ' ':
+            firing = 1; break;
+        case 'q':
+            exit(0); break;
+    }
 }
 
 void
@@ -255,10 +299,13 @@ keyPress(int key, int x, int y)
     {
         case 100:
             left = 1; break;
+
         case 101:
             up = 1; break;
+
 	    case 102:
             right = 1; break;
+
         case 103:
             down = 1; break;
     }
@@ -276,10 +323,13 @@ keyRelease(int key, int x, int y)
     {
         case 100:
             left = 0; break;
+
         case 101:
             up = 0; break;
+
 	    case 102:
             right = 0; break;
+
         case 103:
             down = 0; break;
     }
@@ -317,12 +367,15 @@ init()
      * ship's coordinates and velocity, etc.
      */
 
+    /** initialize ship **/
     ship.x = 50.0;
     ship.y = 50.0;
     ship.dx = 0.0;
     ship.dy = 0.0;
     ship.phi = 90.0;
     ship.radius = 2.5;
+    ship.acceleration = 0.00002;
+    ship.turnSpeed = 2.6;
 }
 
 void
