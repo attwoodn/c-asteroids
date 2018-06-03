@@ -101,6 +101,7 @@ static void	drawAsteroid(Asteroid *a);
 static double myRandom(double min, double max);
 
 static double clamp(double value, double min, double max);
+static double signOf(double value);
 
 
 /* -- global variables ------------------------------------------------------ */
@@ -240,23 +241,37 @@ myTimer(int value)
         }
     }
 
-    if (up == 1){
-        double newDx = ship.dx - (ship.acceleration * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
-        double newDy = ship.dy + (ship.acceleration * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+    if (up == 1 || down == 1){
+        double newDx;
+        double newDy;
 
-        if (sqrt(pow(newDx, 2) + pow(newDy, 2)) < MAX_VELOCITY){
-            ship.dx = newDx;
-            ship.dy = newDy;
+        if (up == 1){
+            // up velocity calculation
+            newDx = ship.dx - (ship.acceleration * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+            newDy = ship.dy + (ship.acceleration * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+        } else {
+            // down velocity calculation. Braking acceleration is 33% slower for extra fun
+            newDx = ship.dx + ((ship.acceleration/1.5) * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+            newDy = ship.dy - ((ship.acceleration/1.5) * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
         }
-    }
 
-    if (down == 1){
-        double newDx = ship.dx + ((ship.acceleration/1.5) * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
-        double newDy = ship.dy - ((ship.acceleration/1.5) * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
+        double deltaMagnitude = sqrt(pow(newDx, 2) + pow(newDy, 2));
 
-        if (sqrt(pow(newDx, 2) + pow(newDy, 2)) < MAX_VELOCITY){
+        if (deltaMagnitude <= MAX_VELOCITY){
             ship.dx = newDx;
             ship.dy = newDy;
+        } else {
+            // subtract the difference to make it the same magnitude as the max velocity
+            deltaMagnitude -= (deltaMagnitude - MAX_VELOCITY);
+            double thetaRadians = atan(newDy/newDx);
+
+            if (newDx < 0){
+                ship.dx = deltaMagnitude * cos(thetaRadians - M_PI);
+                ship.dy = deltaMagnitude * sin(thetaRadians - M_PI);
+            } else {
+                ship.dx = deltaMagnitude * cos(thetaRadians);
+                ship.dy = deltaMagnitude * sin(thetaRadians);
+            }       
         }
     }
 
@@ -265,10 +280,21 @@ myTimer(int value)
     glutTimerFunc(TIME_DELTA, myTimer, value);		/* 30 frames per second */
 }
 
+/**
+ *  clamps value between min and max
+ */
 double clamp (double value, double min, double max){
     value = value <= max ? value : max;
     value = value >= min ? value : min;
     return value;
+}
+
+/**
+ *  Returns -1 for negative values and +1 for positive and 0 values
+ */
+double signOf(double value){
+    if (value >= 0.0) return 1.0;
+    else return -1.0;
 }
 
 void
