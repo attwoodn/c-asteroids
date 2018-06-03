@@ -34,10 +34,12 @@
 
 #define TIME_DELTA      33
 
-#define MAX_VELOCITY    0.1
-#define MAX_PHOTONS	    8
-#define MAX_ASTEROIDS	8
-#define MAX_VERTICES	16
+#define MAX_SHIP_VELOCITY       0.1
+#define PHOTON_VELOCITY         MAX_SHIP_VELOCITY * 1.2
+#define PHOTON_LENGTH           2.5
+#define MAX_PHOTONS             8
+#define MAX_ASTEROIDS	        8
+#define MAX_VERTICES	        16
 
 
 #define drawCircle() glCallList(circle)
@@ -73,7 +75,7 @@ typedef struct {
 
 typedef struct {
 	int	active;
-	double x, y, dx, dy, phi;
+	double x1, y1, x2, y2, dx, dy, phi;
 } Photon;
 
 typedef struct {
@@ -162,8 +164,9 @@ myDisplay()
     drawShip(&ship);
 
     for (i=0; i<MAX_PHOTONS; i++)
-    	if (photons[i].active)
+    	if (photons[i].active){
             drawPhoton(&photons[i]);
+        }
 
     for (i=0; i<MAX_ASTEROIDS; i++)
     	if (asteroids[i].active)
@@ -257,12 +260,12 @@ myTimer(int value)
 
         double deltaMagnitude = sqrt(pow(newDx, 2) + pow(newDy, 2));
 
-        if (deltaMagnitude <= MAX_VELOCITY){
+        if (deltaMagnitude <= MAX_SHIP_VELOCITY){
             ship.dx = newDx;
             ship.dy = newDy;
         } else {
             // subtract the difference to make it the same magnitude as the max velocity
-            deltaMagnitude -= (deltaMagnitude - MAX_VELOCITY);
+            deltaMagnitude -= (deltaMagnitude - MAX_SHIP_VELOCITY);
             double thetaRadians = atan(newDy/newDx);
 
             if (newDx < 0){
@@ -272,6 +275,24 @@ myTimer(int value)
                 ship.dx = deltaMagnitude * cos(thetaRadians);
                 ship.dy = deltaMagnitude * sin(thetaRadians);
             }       
+        }
+    }
+
+    /****    update photons    ****/
+    int i;
+    for(i = 0; i < MAX_PHOTONS; i++){
+        if(photons[i].active){
+            Photon p = photons[i];
+            p.x1 = p.x1 + p.dx*TIME_DELTA;
+            p.y1 = p.y1 + p.dy*TIME_DELTA;
+            p.x2 = p.x2 + p.dx*TIME_DELTA;
+            p.y2 = p.y2 + p.dy*TIME_DELTA;
+
+            if(p.x2 < 0 || p.x2 > xMax || p.y2 < 0 || p.y2 > yMax){
+                p.active = 0;
+            }
+
+            photons[i] = p;
         }
     }
 
@@ -289,14 +310,6 @@ double clamp (double value, double min, double max){
     return value;
 }
 
-/**
- *  Returns -1 for negative values and +1 for positive and 0 values
- */
-double signOf(double value){
-    if (value >= 0.0) return 1.0;
-    else return -1.0;
-}
-
 void
 myKey(unsigned char key, int x, int y)
 {
@@ -306,8 +319,24 @@ myKey(unsigned char key, int x, int y)
      */
 
     switch(key){
-        case ' ':
-            firing = 1; break;
+        case ' ': ;
+            int i; 
+            for(i = 0; i < MAX_PHOTONS; i++){
+                Photon p = photons[i];
+                if (p.active == 0){
+                    p.active = 1;
+                    p.phi = ship.phi;
+                    p.x1 = ship.x + (ship.radius * cos((p.phi) * DEG2RAD));
+                    p.y1 = ship.y + (ship.radius * sin((p.phi) * DEG2RAD));
+                    p.x2 = p.x1 + (PHOTON_LENGTH * cos((p.phi) * DEG2RAD));
+                    p.y2 = p.y1 + (PHOTON_LENGTH * sin((p.phi) * DEG2RAD));
+                    p.dx = -PHOTON_VELOCITY * sin((p.phi - 90.0) * DEG2RAD);
+                    p.dy = PHOTON_VELOCITY * cos((p.phi - 90.0) * DEG2RAD);
+                    photons[i] = p;
+                    printf("firing a photon:\nv1: (%.2f, %.2f)    v2: (%.2f, %.2f)    dx: %.2f    dy: %.2f    phi: %.2f\n\n", p.x1, p.y1, p.x2, p.y2, p.dx, p.dy, p.phi);
+                    break;
+                }
+            } break;
         case 'q':
             exit(0); break;
     }
@@ -464,13 +493,16 @@ drawShip(Ship *s) {
 }
 
 void
-drawPhoton(Photon *p)
-{
+drawPhoton(Photon *p) {
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glBegin(GL_LINES);
+    glVertex2f(p->x1, p->y1);
+    glVertex2f(p->x2, p->y2);
+    glEnd();
 }
 
 void
-drawAsteroid(Asteroid *a)
-{
+drawAsteroid(Asteroid *a) {
 }
 
 
