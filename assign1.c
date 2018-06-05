@@ -35,7 +35,7 @@
 #define TIME_DELTA      33
 
 #define MAX_SHIP_VELOCITY       0.1
-#define PHOTON_VELOCITY         MAX_SHIP_VELOCITY * 1.2
+#define PHOTON_VELOCITY         MAX_SHIP_VELOCITY * 1.5
 #define PHOTON_LENGTH           2.5
 #define MAX_PHOTONS             8
 #define MAX_ASTEROIDS	        8
@@ -100,10 +100,15 @@ static void	drawShip(Ship *s);
 static void	drawPhoton(Photon *p);
 static void	drawAsteroid(Asteroid *a);
 
-static double myRandom(double min, double max);
+static void debug(void);
+static void advanceShip(void);
+static void processUserInput(void);
+static void updatePhotons(void);
+static void advanceAsteroids(void);
 
+static double myRandom(double min, double max);
 static double clamp(double value, double min, double max);
-static double signOf(double value);
+static void initPhoton(void);
 
 
 /* -- global variables ------------------------------------------------------ */
@@ -146,7 +151,7 @@ main(int argc, char *argv[])
 }
 
 
-/* -- callback functions ---------------------------------------------------- */
+/* ================================================ GLUT Callback Functions ============================================== */
 
 void
 myDisplay()
@@ -182,54 +187,119 @@ myTimer(int value)
      *	timer callback function
      */
 
-    /* advance the ship */
+    debug();
+    processUserInput();
+    advanceShip();
+    updatePhotons();
+    advanceAsteroids();
 
-    /* advance photon laser shots, eliminating those that have gone past
-      the window boundaries */
+    /* TODO - test for and handle collisions */
 
-    /* advance asteroids */
+    glutPostRedisplay();
+    
+    glutTimerFunc(TIME_DELTA, myTimer, value);		/* 30 frames per second */
+}
 
-    /* test for and handle collisions */
+void
+myKey(unsigned char key, int x, int y) {
+    /*
+     *  keyboard callback function; add code here for firing the laser,
+     *  starting and/or pausing the game, etc.
+     */
+    switch(key) {
+        case ' ':
+            initPhoton(); break;
+        case 'q':
+            exit(0); break;
+    }
+}
 
+void
+keyPress(int key, int x, int y) {
+    /*
+     *  this function is called when a special key is pressed; we are
+     *  interested in the cursor keys only
+     */
+
+    switch (key) {
+        case 100:
+            left = 1; break;
+        case 101:
+            up = 1; break;
+        case 102:
+            right = 1; break;
+        case 103:
+            down = 1; break;
+    }
+}
+
+void
+keyRelease(int key, int x, int y) {
+    /*
+     *  this function is called when a special key is released; we are
+     *  interested in the cursor keys only
+     */
+
+    switch (key)
+    {
+        case 100:
+            left = 0; break;
+
+        case 101:
+            up = 0; break;
+
+        case 102:
+            right = 0; break;
+
+        case 103:
+            down = 0; break;
+    }
+}
+
+void
+myReshape(int w, int h) {
+    /*
+     *  reshape callback function; the upper and lower boundaries of the
+     *  window are at 100.0 and 0.0, respectively; the aspect ratio is
+     *  determined by the aspect ratio of the viewport
+     */
+
+    xMax = 100.0*w/h;
+    yMax = 100.0;
+
+    glViewport(0, 0, w, h);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, xMax, 0.0, yMax, -1.0, 1.0);
+
+    glMatrixMode(GL_MODELVIEW);
+}
+
+
+/* ============================================ Processing Functions ======================================= */
+
+/**
+ *  Print debug information to the console
+ */
+void 
+debug() {
     timer += TIME_DELTA;
 
-    if (timer >= 1000){
-        printf("ship coords: (%.2f, %.2f)\n", ship.x, ship.y);
-        printf("direction: %.2f\n", ship.phi);
-        printf("dx: %.2f\n", ship.dx);
-        printf("dy: %.2f\n", ship.dy);
+    if (timer >= 3000) {
+        printf("ship coords: (%.3f, %.3f)\n", ship.x, ship.y);
+        printf("direction: %.3f\n", ship.phi);
+        printf("dx: %.4f\n", ship.dx);
+        printf("dy: %.4f\n", ship.dy);
         printf("\n\n");
-        timer -= 1000;
+        timer -= 3000;
     }
+}
 
-
-    /****   update ship position  ****/
-
-    ship.x = ship.x + ship.dx*TIME_DELTA;
-    ship.y = ship.y + ship.dy*TIME_DELTA;
-
-    // check if ship left the screen
-    if (ship.x > xMax || ship.x < 0.0 || ship.y > yMax || ship.y < 0.0){
-        // set the ship's new position on the screen dependent on their velocity
-
-        double collisionCheckX = clamp(ship.x, 0.0, xMax);
-        double collisionCheckY = clamp(ship.y, 0.0, yMax);
-
-        while (collisionCheckX <= xMax && collisionCheckX >= 0 && collisionCheckY <= yMax && collisionCheckY >= 0){
-            collisionCheckX -= ship.dx*2;
-            collisionCheckY -= ship.dy*2;
-        }
-
-        collisionCheckX = clamp(collisionCheckX, 0.0, xMax);
-        collisionCheckY = clamp(collisionCheckY, 0.0, yMax);
-
-        ship.x = collisionCheckX;
-        ship.y = collisionCheckY;
-    }
-
-
-    /****   process user input   ****/
-
+/**
+ *  Respond to user input by turning or accelerating the ship.
+ */
+void 
+processUserInput() {
     if (right == 1){
         ship.phi -= ship.turnSpeed;
         if (ship.phi < 0.0){
@@ -253,32 +323,72 @@ myTimer(int value)
             newDx = ship.dx - (ship.acceleration * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
             newDy = ship.dy + (ship.acceleration * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
         } else {
-            // down velocity calculation. Braking acceleration is 33% slower for extra fun
+            // down velocity calculation. Braking acceleration is 33% slower for extra challenge
             newDx = ship.dx + ((ship.acceleration/1.5) * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
             newDy = ship.dy - ((ship.acceleration/1.5) * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
         }
 
-        double deltaMagnitude = sqrt(pow(newDx, 2) + pow(newDy, 2));
+        double velocityMagnitude = sqrt(pow(newDx, 2) + pow(newDy, 2));
 
-        if (deltaMagnitude <= MAX_SHIP_VELOCITY){
+        if (velocityMagnitude <= MAX_SHIP_VELOCITY){
             ship.dx = newDx;
             ship.dy = newDy;
         } else {
-            // subtract the difference to make it the same magnitude as the max velocity
-            deltaMagnitude -= (deltaMagnitude - MAX_SHIP_VELOCITY);
+            // new velocity will exceed max ship velocity
+            // subtract the difference to make it the same magnitude as the max ship velocity
+            velocityMagnitude -= (velocityMagnitude - MAX_SHIP_VELOCITY);
             double thetaRadians = atan(newDy/newDx);
 
             if (newDx < 0){
-                ship.dx = deltaMagnitude * cos(thetaRadians - M_PI);
-                ship.dy = deltaMagnitude * sin(thetaRadians - M_PI);
+                ship.dx = velocityMagnitude * cos(thetaRadians - M_PI);
+                ship.dy = velocityMagnitude * sin(thetaRadians - M_PI);
             } else {
-                ship.dx = deltaMagnitude * cos(thetaRadians);
-                ship.dy = deltaMagnitude * sin(thetaRadians);
+                ship.dx = velocityMagnitude * cos(thetaRadians);
+                ship.dy = velocityMagnitude * sin(thetaRadians);
             }       
         }
     }
+}
 
-    /****    update photons    ****/
+/**
+ *  Advances the ship. This entails incrementing the ship's position and resetting the ship 
+ *  within the bounds of the screen when it leaves.
+ */
+void 
+advanceShip(){
+    ship.x = ship.x + ship.dx*TIME_DELTA;
+    ship.y = ship.y + ship.dy*TIME_DELTA;
+
+    // check if ship left the screen
+    if (ship.x > xMax || ship.x < 0.0 || ship.y > yMax || ship.y < 0.0){
+        // set the ship's new position on the screen dependent on its velocity
+
+        // ship is out of the screen so we need to get an approximation of its coordinates within the screen
+        double reboundX = clamp(ship.x, 0.0, xMax);
+        double reboundY = clamp(ship.y, 0.0, yMax);
+
+        // perform a raycast of the opposite of the ship's velocity. When the ray goes out of the screen, 
+        // this gives an approximation of where the ship should re-enter 
+        while (reboundX <= xMax && reboundX >= 0 && reboundY <= yMax && reboundY >= 0){
+            reboundX -= ship.dx*2;
+            reboundY -= ship.dy*2;
+        }
+
+        // clamp the approximated values to within the screen
+        reboundX = clamp(reboundX, 0.0, xMax);
+        reboundY = clamp(reboundY, 0.0, yMax);
+
+        ship.x = reboundX;
+        ship.y = reboundY;
+    }
+}
+
+/**
+ *  Iterate over all active photons and updates their position. When an active photon has left the screen, 
+ *  it is changed to not active.
+ */
+void 
+updatePhotons(){
     int i;
     for(i = 0; i < MAX_PHOTONS; i++){
         if(photons[i].active){
@@ -288,184 +398,22 @@ myTimer(int value)
             p.x2 = p.x2 + p.dx*TIME_DELTA;
             p.y2 = p.y2 + p.dy*TIME_DELTA;
 
-            if(p.x2 < 0 || p.x2 > xMax || p.y2 < 0 || p.y2 > yMax){
+            if(p.x1 < 0 || p.x1 > xMax || p.y1 < 0 || p.y1 > yMax){
                 p.active = 0;
             }
 
             photons[i] = p;
         }
     }
-
-    glutPostRedisplay();
-    
-    glutTimerFunc(TIME_DELTA, myTimer, value);		/* 30 frames per second */
 }
 
-/**
- *  clamps value between min and max
- */
-double clamp (double value, double min, double max){
-    value = value <= max ? value : max;
-    value = value >= min ? value : min;
-    return value;
-}
+void 
+advanceAsteroids(){
 
-void
-myKey(unsigned char key, int x, int y)
-{
-    /*
-     *	keyboard callback function; add code here for firing the laser,
-     *	starting and/or pausing the game, etc.
-     */
-
-    switch(key){
-        case ' ': ;
-            int i; 
-            for(i = 0; i < MAX_PHOTONS; i++){
-                Photon p = photons[i];
-                if (p.active == 0){
-                    p.active = 1;
-                    p.phi = ship.phi;
-                    p.x1 = ship.x + (ship.radius * cos((p.phi) * DEG2RAD));
-                    p.y1 = ship.y + (ship.radius * sin((p.phi) * DEG2RAD));
-                    p.x2 = p.x1 + (PHOTON_LENGTH * cos((p.phi) * DEG2RAD));
-                    p.y2 = p.y1 + (PHOTON_LENGTH * sin((p.phi) * DEG2RAD));
-                    p.dx = -PHOTON_VELOCITY * sin((p.phi - 90.0) * DEG2RAD);
-                    p.dy = PHOTON_VELOCITY * cos((p.phi - 90.0) * DEG2RAD);
-                    photons[i] = p;
-                    printf("firing a photon:\nv1: (%.2f, %.2f)    v2: (%.2f, %.2f)    dx: %.2f    dy: %.2f    phi: %.2f\n\n", p.x1, p.y1, p.x2, p.y2, p.dx, p.dy, p.phi);
-                    break;
-                }
-            } break;
-        case 'q':
-            exit(0); break;
-    }
-}
-
-void
-keyPress(int key, int x, int y)
-{
-    /*
-     *	this function is called when a special key is pressed; we are
-     *	interested in the cursor keys only
-     */
-
-    switch (key)
-    {
-        case 100:
-            left = 1; break;
-
-        case 101:
-            up = 1; break;
-
-	    case 102:
-            right = 1; break;
-
-        case 103:
-            down = 1; break;
-    }
-}
-
-void
-keyRelease(int key, int x, int y)
-{
-    /*
-     *	this function is called when a special key is released; we are
-     *	interested in the cursor keys only
-     */
-
-    switch (key)
-    {
-        case 100:
-            left = 0; break;
-
-        case 101:
-            up = 0; break;
-
-	    case 102:
-            right = 0; break;
-
-        case 103:
-            down = 0; break;
-    }
-}
-
-void
-myReshape(int w, int h)
-{
-    /*
-     *	reshape callback function; the upper and lower boundaries of the
-     *	window are at 100.0 and 0.0, respectively; the aspect ratio is
-     *  determined by the aspect ratio of the viewport
-     */
-
-    xMax = 100.0*w/h;
-    yMax = 100.0;
-
-    glViewport(0, 0, w, h);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0.0, xMax, 0.0, yMax, -1.0, 1.0);
-
-    glMatrixMode(GL_MODELVIEW);
 }
 
 
-/* -- other functions ------------------------------------------------------- */
-
-void
-init()
-{
-    /*
-     * set parameters including the numbers of asteroids and photons present,
-     * the maximum velocity of the ship, the velocity of the laser shots, the
-     * ship's coordinates and velocity, etc.
-     */
-
-    /** initialize ship **/
-    ship.x = 50.0;
-    ship.y = 50.0;
-    ship.dx = 0.0;
-    ship.dy = 0.0;
-    ship.phi = 90.0;
-    ship.radius = 2.5;
-    ship.acceleration = 0.00002;
-    ship.turnSpeed = 2.6;
-}
-
-void
-initAsteroid(
-	Asteroid *a,
-	double x, double y, double size)
-{
-    /*
-     *	generate an asteroid at the given position; velocity, rotational
-     *	velocity, and shape are generated randomly; size serves as a scale
-     *	parameter that allows generating asteroids of different sizes; feel
-     *	free to adjust the parameters according to your needs
-     */
-
-    double	theta, r;
-    int		i;
-        
-    a->x = x;
-    a->y = y;
-    a->phi = 0.0;
-    a->dx = myRandom(-0.8, 0.8);
-    a->dy = myRandom(-0.8, 0.8);
-    a->dphi = myRandom(-0.2, 0.2);
-    
-    a->nVertices = 6+rand()%(MAX_VERTICES-6);
-    
-    for (i=0; i<a->nVertices; i++) {
-	   theta = 2.0*M_PI*i/a->nVertices;
-	   r = size*myRandom(2.0, 3.0);
-	   a->coords[i].x = -r*sin(theta);
-	   a->coords[i].y = r*cos(theta);
-    }
-    
-    a->active = 1;
-}
+/* ============================================= Drawing Functions ========================================= */
 
 void
 drawShip(Ship *s) {
@@ -506,15 +454,98 @@ drawAsteroid(Asteroid *a) {
 }
 
 
-/* -- helper function ------------------------------------------------------- */
+/* ========================================== Initialization Functions ===================================== */
+
+void
+init()
+{
+    /*
+     * set parameters including the numbers of asteroids and photons present,
+     * the maximum velocity of the ship, the velocity of the laser shots, the
+     * ship's coordinates and velocity, etc.
+     */
+
+    /** initialize ship **/
+    ship.x = 50.0;
+    ship.y = 50.0;
+    ship.dx = 0.0;
+    ship.dy = 0.0;
+    ship.phi = 90.0;
+    ship.radius = 2.5;
+    ship.acceleration = 0.00002;
+    ship.turnSpeed = 2.6;
+}
+
+void
+initAsteroid(
+    Asteroid *a,
+    double x, double y, double size)
+{
+    /*
+     *  generate an asteroid at the given position; velocity, rotational
+     *  velocity, and shape are generated randomly; size serves as a scale
+     *  parameter that allows generating asteroids of different sizes; feel
+     *  free to adjust the parameters according to your needs
+     */
+
+    double  theta, r;
+    int     i;
+        
+    a->x = x;
+    a->y = y;
+    a->phi = 0.0;
+    a->dx = myRandom(-0.8, 0.8);
+    a->dy = myRandom(-0.8, 0.8);
+    a->dphi = myRandom(-0.2, 0.2);
+    
+    a->nVertices = 6+rand()%(MAX_VERTICES-6);
+    
+    for (i=0; i<a->nVertices; i++) {
+       theta = 2.0*M_PI*i/a->nVertices;
+       r = size*myRandom(2.0, 3.0);
+       a->coords[i].x = -r*sin(theta);
+       a->coords[i].y = r*cos(theta);
+    }
+    
+    a->active = 1;
+}
+
+void 
+initPhoton(){
+    int i; 
+    for(i = 0; i < MAX_PHOTONS; i++){
+        Photon p = photons[i];
+        if (p.active == 0){
+            p.active = 1;
+            p.phi = ship.phi;
+            p.x1 = ship.x + (ship.radius * cos(p.phi * DEG2RAD));
+            p.y1 = ship.y + (ship.radius * sin(p.phi * DEG2RAD));
+            p.x2 = p.x1 + (PHOTON_LENGTH * cos(p.phi * DEG2RAD));
+            p.y2 = p.y1 + (PHOTON_LENGTH * sin(p.phi * DEG2RAD));
+            p.dx = -PHOTON_VELOCITY * sin((p.phi - 90.0) * DEG2RAD);
+            p.dy = PHOTON_VELOCITY * cos((p.phi - 90.0) * DEG2RAD);
+            photons[i] = p;
+            printf("firing a photon:\nv1: (%.2f, %.2f)    v2: (%.2f, %.2f)    dx: %.2f    dy: %.2f    phi: %.2f\n\n", p.x1, p.y1, p.x2, p.y2, p.dx, p.dy, p.phi);
+            break;
+        }
+    }
+}
+
+
+/* ============================================== Helper Functions ========================================= */
 
 double
 myRandom(double min, double max)
 {
-	double	d;
-	
 	/* return a random number uniformly draw from [min,max] */
-	d = min+(max-min)*(rand()%0x7fff)/32767.0;
-	
-	return d;
+	return min+(max-min)*(rand()%0x7fff)/32767.0;
+}
+
+/**
+ *  clamps value between min and max
+ */
+double clamp (double value, double min, double max){
+    value = value <= max ? value : max;
+    value = value >= min ? value : min;
+    return value;
 }
