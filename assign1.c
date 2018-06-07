@@ -32,34 +32,13 @@
 
 #define TIME_DELTA      33
 
-#define SPAWN_ASTEROID_PROB     0.0005
+#define SPAWN_ASTEROID_PROB     0.005
 #define MAX_SHIP_VELOCITY       0.05
 #define PHOTON_VELOCITY         MAX_SHIP_VELOCITY * 2
 #define PHOTON_LENGTH           2.5
 #define MAX_PHOTONS             8
 #define MAX_ASTEROIDS	        8
 #define MAX_VERTICES	        16
-
-
-#define drawCircle() glCallList(circle)
-
-
-/* -- display list for drawing a circle ------------------------------------- */
-
-static GLuint	circle;
-
-void
-buildCircle() {
-    GLint   i;
-
-    circle = glGenLists(1);
-    glNewList(circle, GL_COMPILE);
-      glBegin(GL_POLYGON);
-        for(i=0; i<40; i++)
-            glVertex2d(cos(i*M_PI/20.0), sin(i*M_PI/20.0));
-      glEnd();
-    glEndList();
-}
 
 
 /* -- type definitions ------------------------------------------------------ */
@@ -79,7 +58,7 @@ typedef struct {
 
 typedef struct {
 	int	active, nVertices;
-	double x, y, phi, dx, dy, dphi;
+	double x, y, phi, dx, dy, dphi, radius;
 	Coords	coords[MAX_VERTICES];
 } Asteroid;
 
@@ -111,11 +90,13 @@ static double clamp(double value, double min, double max);
 static void initPhoton(void);
 static int isInBounds(double x, double y);
 static void raycastForNewCoordinates(double x, double y, double dx, double dy, double * newCoords);
+static void checkPhotonAsteroidCollision(void);
+static void resetAsteroidShape(void);
 
 
 /* -- global variables ------------------------------------------------------ */
 
-static int	up = 0, down = 0, left = 0, right = 0, firing = 0; // state of user input
+static int	up = 0, down = 0, left = 0, right = 0, firing = 0, circularAsteroids = 1; // state of user input
 static double xMax, yMax;
 static float timer;
 static Ship	ship;
@@ -134,7 +115,6 @@ main(int argc, char *argv[])
     glutInitDisplayMode(GLUT_DOUBLE|GLUT_RGB);
     glutInitWindowSize(800, 600);
     glutCreateWindow("Asteroids");
-    buildCircle();
     glutDisplayFunc(myDisplay);
     glutIgnoreKeyRepeat(1);
     glutKeyboardFunc(myKey);
@@ -190,13 +170,12 @@ myTimer(int value)
      */
 
     debug();
+    updatePhotons();
     processUserInput();
     advanceShip();
-    updatePhotons();
     spawnAsteroids();
     advanceAsteroids();
-
-    /* TODO - test for and handle collisions */
+    checkPhotonAsteroidCollision();
 
     glutPostRedisplay();
     
@@ -214,6 +193,8 @@ myKey(unsigned char key, int x, int y) {
             initPhoton(); break;
         case 'q':
             exit(0); break;
+        case 'c':
+            resetAsteroidShape(); break;
     }
 }
 
@@ -243,8 +224,7 @@ keyRelease(int key, int x, int y) {
      *  interested in the cursor keys only
      */
 
-    switch (key)
-    {
+    switch (key) {
         case 100:
             left = 0; break;
         case 101:
@@ -289,8 +269,24 @@ debug() {
         printf("ship coords: (%.3f, %.3f)\n", ship.x, ship.y);
         printf("direction: %.3f\n", ship.phi);
         printf("dx: %.4f\n", ship.dx);
-        printf("dy: %.4f\n", ship.dy);
+        printf("dy: %.4f\n\n", ship.dy);
+
+        int i, numActiveAsteroids = 0;
+        for(i = 0; i < MAX_ASTEROIDS; i++){
+            if(asteroids[i].active){
+                numActiveAsteroids ++;
+            } 
+        }
+
+        printf("numActiveAsteroids: %d\n", numActiveAsteroids);
+
+        /*if(numActiveAsteroids == 7){
+            Asteroid ia = asteroids[inactive];
+            printf("inactive asteroid stats -   x: %.3f    y: %.3f    dx: %.3f    dy: %.3f    radius: %.3f\n", ia.x, ia.y, ia.dx, ia.dy, ia.radius);
+        }*/
+
         printf("\n\n");
+
         timer -= 3000;
     }
 }
@@ -446,7 +442,7 @@ spawnAsteroids(){
 
         printf("Spawning an asteroid\nspawnSide: %i\nspawnX: %.3f    spawnY: %.3f\n", spawnSide, spawnX, spawnY);
 
-        initAsteroid(&newAsteroid, spawnX, spawnY, 1.0);
+        initAsteroid(&newAsteroid, spawnX, spawnY, 2.0);
         asteroids[i] = newAsteroid;
     }
 }
@@ -463,15 +459,6 @@ advanceAsteroids(){
             a.y += a.dy*TIME_DELTA;
             a.phi += a.dphi;
             //printf("newX: %.3f    newY: %.3f\n", a.x, a.y);
-
-            /*
-            this method of resetting the asteroids is too predictable and boring. Asteroids don't endanger the player
-            if (!isInBounds(a.x, a.y)){
-                double newCoords[2];
-                raycastForNewCoordinates(a.x, a.y, a.dx, a.dy, newCoords);
-                a.x = newCoords[0];
-                a.y = newCoords[1];
-            }*/
 
             if (a.x > xMax){
                 a.x = 0.0;
@@ -538,11 +525,6 @@ drawAsteroid(Asteroid *a) {
     int i;
     glLoadIdentity();
 
-    glBegin(GL_POINTS);
-    glVertex2f(a->x, a->y);
-    glEnd();
-
-
     // move to the asteroid's x and y
     myTranslate2D(a->x, a->y);
     myRotate2D(a->phi);
@@ -576,7 +558,7 @@ init()
     ship.phi = 90.0;
     ship.radius = 2.5;
     ship.acceleration = 0.00002;
-    ship.turnSpeed = 2.6;
+    ship.turnSpeed = 3.4;
 }
 
 void
@@ -603,13 +585,24 @@ initAsteroid(
     
     a->nVertices = 6+rand()%(MAX_VERTICES-6);
     
-    for (i=0; i<a->nVertices; i++) {
-       theta = 2.0*M_PI*i/a->nVertices;
-       r = size*myRandom(2.0, 3.0);
-       a->coords[i].x = r*sin(theta);
-       a->coords[i].y = r*cos(theta);
+    if(circularAsteroids){
+        r = size * 2.5;
+        a->radius = r;
+        for (i=0; i<a->nVertices; i++) {
+           theta = 2.0*M_PI*i/a->nVertices;
+           a->coords[i].x = r*sin(theta);
+           a->coords[i].y = r*cos(theta);
+        }
+    } else {
+        a->radius = size * 2.0;                             // todo fix this when implementing real asteroids
+        for (i=0; i<a->nVertices; i++) {
+           theta = 2.0*M_PI*i/a->nVertices;
+           r = size*myRandom(2.0, 3.0);
+           a->coords[i].x = r*sin(theta);
+           a->coords[i].y = r*cos(theta);
+        }
     }
-    
+
     a->active = 1;
 }
 
@@ -628,7 +621,7 @@ initPhoton(){
             p.dx = -PHOTON_VELOCITY * sin((p.phi - 90.0) * DEG2RAD);
             p.dy = PHOTON_VELOCITY * cos((p.phi - 90.0) * DEG2RAD);
             photons[i] = p;
-            printf("firing a photon:\nv1: (%.2f, %.2f)    v2: (%.2f, %.2f)    dx: %.2f    dy: %.2f    phi: %.2f\n\n", p.x1, p.y1, p.x2, p.y2, p.dx, p.dy, p.phi);
+            //printf("firing a photon:\nv1: (%.2f, %.2f)    v2: (%.2f, %.2f)    dx: %.2f    dy: %.2f    phi: %.2f\n\n", p.x1, p.y1, p.x2, p.y2, p.dx, p.dy, p.phi);
             break;
         }
     }
@@ -683,4 +676,57 @@ raycastForNewCoordinates(double x, double y, double dx, double dy, double * newC
     // clamp the approximated values to within the screen
     newCoords[0] = clamp(reEnterX, 0.0, xMax);
     newCoords[1] = clamp(reEnterY, 0.0, yMax);
+}
+
+void 
+checkPhotonAsteroidCollision(){
+    int photonIndex, asteroidIndex;
+    for(photonIndex = 0; photonIndex < MAX_PHOTONS; photonIndex ++){
+        if (photons[photonIndex].active){
+            // for each active photon...
+            for (asteroidIndex = 0; asteroidIndex < MAX_ASTEROIDS; asteroidIndex ++){
+                if (asteroids[asteroidIndex].active){
+                    // ... and for each active asteroid, check if there was a collision  
+                    Photon p = photons[photonIndex];
+                    Asteroid a = asteroids[asteroidIndex];
+
+                    double xPow1 = pow((p.x2 - a.x), 2);
+                    double yPow1 = pow((p.y2 - a.y), 2);
+                    double xPow2 = pow((p.x1 - a.x), 2);
+                    double yPow2 = pow((p.y1 - a.y), 2);
+                    double r2 = pow(a.radius, 2);
+
+                    if(xPow1 + yPow1 <= r2 || xPow2 + yPow2 <= r2){
+                        // there was a collision between this photon and this asteroid
+                        photons[photonIndex].active = 0;
+                        asteroids[asteroidIndex].active = 0;
+                        
+                        if(a.radius > 2.0){
+                            // if the asteroid is big enough, create some child asteroids
+                            int i, maxChildAsteroids = 3, childAsteroidCount = 0;
+                            for(i = 0; i < MAX_ASTEROIDS; i++){
+                                if (!asteroids[i].active && childAsteroidCount < maxChildAsteroids){
+                                    childAsteroidCount++;
+
+                                    initAsteroid(&asteroids[i], a.x, a.y, a.radius/4.0);
+                                }
+                            }
+                        }
+
+                        break;
+                    } 
+                }
+            }
+        }
+    }
+}
+
+void 
+resetAsteroidShape(){
+    // change value from 0 -> 1 or from 1 -> 0 and reset asteroids
+    circularAsteroids = abs(circularAsteroids - 1); 
+    int i;
+    for (i = 0; i < MAX_ASTEROIDS; i ++){
+        asteroids[i].active = 0;
+    }
 }
