@@ -67,6 +67,7 @@ typedef struct {
 
 static void	myDisplay(void);
 static void	myTimer(int value);
+static void myPauseTimer(int value);
 static void	myKey(unsigned char key, int x, int y);
 static void	keyPress(int key, int x, int y);
 static void	keyRelease(int key, int x, int y);
@@ -96,7 +97,7 @@ static void resetAsteroidShape(void);
 
 /* -- global variables ------------------------------------------------------ */
 
-static int	up = 0, down = 0, left = 0, right = 0, firing = 0, circularAsteroids = 1; // state of user input
+static int	up = 0, down = 0, left = 0, right = 0, firing = 0, circularAsteroids = 1, pause = 0; // state of user input
 static double xMax, yMax;
 static float timer;
 static Ship	ship;
@@ -179,7 +180,21 @@ myTimer(int value)
 
     glutPostRedisplay();
     
-    glutTimerFunc(TIME_DELTA, myTimer, value);		/* 30 frames per second */
+    if(pause){
+        glutTimerFunc(TIME_DELTA, myPauseTimer, value);
+    } else {
+        glutTimerFunc(TIME_DELTA, myTimer, value);
+    }
+}
+
+void
+myPauseTimer(int value){
+    if(pause){
+        glutTimerFunc(TIME_DELTA, myPauseTimer, value);
+    } else {
+        glutTimerFunc(TIME_DELTA, myTimer, value);
+    }
+    
 }
 
 void
@@ -195,6 +210,8 @@ myKey(unsigned char key, int x, int y) {
             exit(0); break;
         case 'c':
             resetAsteroidShape(); break;
+        case 'p':
+            pause = abs(pause - 1); break;
     }
 }
 
@@ -701,7 +718,7 @@ checkPhotonAsteroidCollision(){
                         photons[photonIndex].active = 0;
                         asteroids[asteroidIndex].active = 0;
                         
-                        if(a.radius > 2.0){
+                        if(a.radius > 2.2){
                             // if the asteroid is big enough, create some child asteroids
                             int i, maxChildAsteroids = 3, childAsteroidCount = 0;
                             for(i = 0; i < MAX_ASTEROIDS; i++){
