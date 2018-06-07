@@ -6,12 +6,10 @@
  *  CSCI 3161
 
  todo:
-    make ship enter the screen based on its velocity direction in which it left the screen. 
-        Do ray casting to trace reverse of position until the ray is out of bounds and then use that position?
-
-    ship projectiles leaving at the same direction as the ship is facing
-
-    circular asteroids
+    - circular asteroids
+    - draw asteroids in the correct location. When the x,y coordinate of an asteroid leaves the screen, how do we update the nVertices of the asteroid
+        accordingly? Should we use some translatation? Store the radius of each vertex from the x,y point upon creation? Could do this by storing
+        the information inside of the coord struct. 
  */
 
 #include <stdlib.h>
@@ -34,8 +32,9 @@
 
 #define TIME_DELTA      33
 
-#define MAX_SHIP_VELOCITY       0.1
-#define PHOTON_VELOCITY         MAX_SHIP_VELOCITY * 1.5
+#define SPAWN_ASTEROID_PROB     0.0005
+#define MAX_SHIP_VELOCITY       0.05
+#define PHOTON_VELOCITY         MAX_SHIP_VELOCITY * 2
 #define PHOTON_LENGTH           2.5
 #define MAX_PHOTONS             8
 #define MAX_ASTEROIDS	        8
@@ -104,11 +103,14 @@ static void debug(void);
 static void advanceShip(void);
 static void processUserInput(void);
 static void updatePhotons(void);
+static void spawnAsteroids(void);
 static void advanceAsteroids(void);
 
 static double myRandom(double min, double max);
 static double clamp(double value, double min, double max);
 static void initPhoton(void);
+static int isInBounds(double x, double y);
+static void raycastForNewCoordinates(double x, double y, double dx, double dy, double * newCoords);
 
 
 /* -- global variables ------------------------------------------------------ */
@@ -139,7 +141,7 @@ main(int argc, char *argv[])
     glutSpecialFunc(keyPress);
     glutSpecialUpFunc(keyRelease);
     glutReshapeFunc(myReshape);
-    glutTimerFunc(33, myTimer, 0);
+    glutTimerFunc(TIME_DELTA, myTimer, 0);
     glClearColor(0.0, 0.0, 0.0, 1.0);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
@@ -191,6 +193,7 @@ myTimer(int value)
     processUserInput();
     advanceShip();
     updatePhotons();
+    spawnAsteroids();
     advanceAsteroids();
 
     /* TODO - test for and handle collisions */
@@ -244,13 +247,10 @@ keyRelease(int key, int x, int y) {
     {
         case 100:
             left = 0; break;
-
         case 101:
             up = 0; break;
-
         case 102:
             right = 0; break;
-
         case 103:
             down = 0; break;
     }
@@ -356,30 +356,19 @@ processUserInput() {
  */
 void 
 advanceShip(){
-    ship.x = ship.x + ship.dx*TIME_DELTA;
-    ship.y = ship.y + ship.dy*TIME_DELTA;
+    ship.x += ship.dx*TIME_DELTA;
+    ship.y += ship.dy*TIME_DELTA;
 
     // check if ship left the screen
-    if (ship.x > xMax || ship.x < 0.0 || ship.y > yMax || ship.y < 0.0){
+    if (!isInBounds(ship.x, ship.y)){
         // set the ship's new position on the screen dependent on its velocity
 
         // ship is out of the screen so we need to get an approximation of its coordinates within the screen
-        double reboundX = clamp(ship.x, 0.0, xMax);
-        double reboundY = clamp(ship.y, 0.0, yMax);
+        double newCoords[2];
+        raycastForNewCoordinates(ship.x, ship.y, ship.dx, ship.dy, newCoords);
 
-        // perform a raycast of the opposite of the ship's velocity. When the ray goes out of the screen, 
-        // this gives an approximation of where the ship should re-enter 
-        while (reboundX <= xMax && reboundX >= 0 && reboundY <= yMax && reboundY >= 0){
-            reboundX -= ship.dx*2;
-            reboundY -= ship.dy*2;
-        }
-
-        // clamp the approximated values to within the screen
-        reboundX = clamp(reboundX, 0.0, xMax);
-        reboundY = clamp(reboundY, 0.0, yMax);
-
-        ship.x = reboundX;
-        ship.y = reboundY;
+        ship.x = newCoords[0];
+        ship.y = newCoords[1];
     }
 }
 
@@ -393,12 +382,12 @@ updatePhotons(){
     for(i = 0; i < MAX_PHOTONS; i++){
         if(photons[i].active){
             Photon p = photons[i];
-            p.x1 = p.x1 + p.dx*TIME_DELTA;
-            p.y1 = p.y1 + p.dy*TIME_DELTA;
-            p.x2 = p.x2 + p.dx*TIME_DELTA;
-            p.y2 = p.y2 + p.dy*TIME_DELTA;
+            p.x1 += p.dx*TIME_DELTA;
+            p.y1 += p.dy*TIME_DELTA;
+            p.x2 += p.dx*TIME_DELTA;
+            p.y2 += p.dy*TIME_DELTA;
 
-            if(p.x1 < 0 || p.x1 > xMax || p.y1 < 0 || p.y1 > yMax){
+            if(!isInBounds(p.x1, p.y1)){
                 p.active = 0;
             }
 
@@ -407,9 +396,104 @@ updatePhotons(){
     }
 }
 
+void
+spawnAsteroids(){
+    // find out if there are any active asteroids currently
+    int i, numActiveAsteroids = 0;
+    for (i = 0; i < MAX_ASTEROIDS; i++){
+        if (asteroids[i].active){
+            numActiveAsteroids++;
+        }
+    }
+
+    if (numActiveAsteroids == 0 || (numActiveAsteroids < MAX_ASTEROIDS && myRandom(0.0, 1.0) < SPAWN_ASTEROID_PROB)){
+        
+        Asteroid newAsteroid;
+
+        for (i = 0; i < MAX_ASTEROIDS; i++){
+            if (!asteroids[i].active){
+                newAsteroid = asteroids[i];
+                break;
+            }
+        }
+
+        // cast double return value to an integer, giving possible values in the range [0-3]
+        int spawnSide = myRandom(0.0, 3.9999);
+
+        double spawnX, spawnY;
+        switch (spawnSide){
+            case 0:
+                // spawn on the right side of the screen
+                spawnX = xMax;
+                spawnY = myRandom(0.0, yMax);
+                break;
+            case 1:
+                // spawn on the bottom side of the screen
+                spawnX = myRandom(0.0, xMax);
+                spawnY = 0.0;
+                break;
+            case 2:
+                // spawn on the left side of the screen
+                spawnX = 0.0;
+                spawnY = myRandom(0.0, yMax);
+                break;
+            case 3:
+                // spawn on the top side of the screen
+                spawnX = myRandom(0.0, xMax);
+                spawnY = yMax;
+                break;
+        }
+
+        printf("Spawning an asteroid\nspawnSide: %i\nspawnX: %.3f    spawnY: %.3f\n", spawnSide, spawnX, spawnY);
+
+        initAsteroid(&newAsteroid, spawnX, spawnY, 1.0);
+        asteroids[i] = newAsteroid;
+    }
+}
+
 void 
 advanceAsteroids(){
+    int i;
+    for (i = 0; i < MAX_ASTEROIDS; i++){
+        if(asteroids[i].active){
+            //printf("updating asteroid at index %i\noldX: %.3f    oldY: %.3f\n", i, asteroids[i].x, asteroids[i].y);
+            Asteroid a = asteroids[i];
 
+            a.x += a.dx*TIME_DELTA;
+            a.y += a.dy*TIME_DELTA;
+            a.phi += a.dphi;
+            //printf("newX: %.3f    newY: %.3f\n", a.x, a.y);
+
+            /*
+            this method of resetting the asteroids is too predictable and boring. Asteroids don't endanger the player
+            if (!isInBounds(a.x, a.y)){
+                double newCoords[2];
+                raycastForNewCoordinates(a.x, a.y, a.dx, a.dy, newCoords);
+                a.x = newCoords[0];
+                a.y = newCoords[1];
+            }*/
+
+            if (a.x > xMax){
+                a.x = 0.0;
+            } else if (a.x < 0.0){
+                a.x = xMax;
+            }
+
+            if (a.y > yMax){
+                a.y = 0.0;
+            } else if (a.y < 0.0){
+                a.y = yMax;
+            }
+
+            /*int j;
+            for (j = 0; j < a.nVertices; j++){
+                a.coords[j].x += a.dx*TIME_DELTA;
+                a.coords[j].y += a.dy*TIME_DELTA;
+            }*/
+
+            asteroids[i] = a;
+        }
+    }
 }
 
 
@@ -451,6 +535,25 @@ drawPhoton(Photon *p) {
 
 void
 drawAsteroid(Asteroid *a) {
+    int i;
+    glLoadIdentity();
+
+    glBegin(GL_POINTS);
+    glVertex2f(a->x, a->y);
+    glEnd();
+
+
+    // move to the asteroid's x and y
+    myTranslate2D(a->x, a->y);
+    myRotate2D(a->phi);
+    
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glBegin(GL_LINE_LOOP);
+    for(i = 0; i < a->nVertices; i++){
+        //printf("drawing asteroid vertex    x: %.3f    y: %.3f\n", a->coords[i].x, a->coords[i].y);
+        glVertex2f(a->coords[i].x, a->coords[i].y);
+    }
+    glEnd();
 }
 
 
@@ -466,7 +569,7 @@ init()
      */
 
     /** initialize ship **/
-    ship.x = 50.0;
+    ship.x = 70.0;
     ship.y = 50.0;
     ship.dx = 0.0;
     ship.dy = 0.0;
@@ -494,16 +597,16 @@ initAsteroid(
     a->x = x;
     a->y = y;
     a->phi = 0.0;
-    a->dx = myRandom(-0.8, 0.8);
-    a->dy = myRandom(-0.8, 0.8);
-    a->dphi = myRandom(-0.2, 0.2);
+    a->dx = myRandom(-0.02, 0.02);
+    a->dy = myRandom(-0.02, 0.02);
+    a->dphi = myRandom(-0.1, 0.1);
     
     a->nVertices = 6+rand()%(MAX_VERTICES-6);
     
     for (i=0; i<a->nVertices; i++) {
        theta = 2.0*M_PI*i/a->nVertices;
        r = size*myRandom(2.0, 3.0);
-       a->coords[i].x = -r*sin(theta);
+       a->coords[i].x = r*sin(theta);
        a->coords[i].y = r*cos(theta);
     }
     
@@ -544,8 +647,40 @@ myRandom(double min, double max)
 /**
  *  clamps value between min and max
  */
-double clamp (double value, double min, double max){
+double 
+clamp (double value, double min, double max){
     value = value <= max ? value : max;
     value = value >= min ? value : min;
     return value;
+}
+
+/**
+ *  checks to see if x and y are within the bounds of the screen
+ */
+int
+isInBounds(double x, double y){
+    if(x < 0 || x > xMax || y < 0 || y > yMax){
+        return 0;
+    }
+
+    return 1;
+}
+
+
+void 
+raycastForNewCoordinates(double x, double y, double dx, double dy, double * newCoords){
+    // assume that x and y are outside of the bounds of the screen. They must be brought back into the screen
+    double reEnterX = clamp(x, 0.0, xMax);
+    double reEnterY = clamp(y, 0.0, yMax);
+
+    // perform a raycast of the opposite of the object's current velocity. When the ray goes out of the screen, 
+    // this gives an approximation of where the object should re-enter 
+    while (isInBounds(reEnterX, reEnterY)){
+        reEnterX -= dx*2;
+        reEnterY -= dy*2;
+    }
+
+    // clamp the approximated values to within the screen
+    newCoords[0] = clamp(reEnterX, 0.0, xMax);
+    newCoords[1] = clamp(reEnterY, 0.0, yMax);
 }
