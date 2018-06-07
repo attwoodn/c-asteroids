@@ -4,12 +4,7 @@
  *  Noah Attwood
  *  B00718872
  *  CSCI 3161
-
- todo:
-    - circular asteroids
-    - draw asteroids in the correct location. When the x,y coordinate of an asteroid leaves the screen, how do we update the nVertices of the asteroid
-        accordingly? Should we use some translatation? Store the radius of each vertex from the x,y point upon creation? Could do this by storing
-        the information inside of the coord struct. 
+ *  Summer 2018 
  */
 
 #include <stdlib.h>
@@ -32,7 +27,7 @@
 
 #define TIME_DELTA      33
 
-#define SPAWN_ASTEROID_PROB     0.005
+#define SPAWN_ASTEROID_PROB     0.004
 #define MAX_SHIP_VELOCITY       0.05
 #define PHOTON_VELOCITY         MAX_SHIP_VELOCITY * 2
 #define PHOTON_LENGTH           2.5
@@ -48,7 +43,9 @@ typedef struct Coords {
 } Coords;
 
 typedef struct {
+    int status; /* status: 0 = destroyed    1 = active, normal    2 = invincible */
 	double x, y, phi, dx, dy, radius, turnSpeed, acceleration;
+    Coords  coords[3];
 } Ship;
 
 typedef struct {
@@ -68,6 +65,7 @@ typedef struct {
 static void	myDisplay(void);
 static void	myTimer(int value);
 static void myPauseTimer(int value);
+static void myMenuTimer(int value);
 static void	myKey(unsigned char key, int x, int y);
 static void	keyPress(int key, int x, int y);
 static void	keyRelease(int key, int x, int y);
@@ -80,11 +78,12 @@ static void	drawPhoton(Photon *p);
 static void	drawAsteroid(Asteroid *a);
 
 static void debug(void);
-static void advanceShip(void);
+static void updateShip(void);
 static void processUserInput(void);
 static void updatePhotons(void);
 static void spawnAsteroids(void);
 static void advanceAsteroids(void);
+static void destroyAndResetShip(void);
 
 static double myRandom(double min, double max);
 static double clamp(double value, double min, double max);
@@ -92,14 +91,15 @@ static void initPhoton(void);
 static int isInBounds(double x, double y);
 static void raycastForNewCoordinates(double x, double y, double dx, double dy, double * newCoords);
 static void checkPhotonAsteroidCollision(void);
+static void checkShipAsteroidCollision(void);
 static void resetAsteroidShape(void);
 
 
 /* -- global variables ------------------------------------------------------ */
 
-static int	up = 0, down = 0, left = 0, right = 0, firing = 0, circularAsteroids = 1, pause = 0; // state of user input
+static int	up = 0, down = 0, left = 0, right = 0, firing = 0, circularAsteroids = 0, pause = 0, started = 0; // state of user input
 static double xMax, yMax;
-static float timer;
+static int timer = 0, respawnTimer = 0;
 static Ship	ship;
 static Photon	photons[MAX_PHOTONS];
 static Asteroid	asteroids[MAX_ASTEROIDS];
@@ -122,7 +122,7 @@ main(int argc, char *argv[])
     glutSpecialFunc(keyPress);
     glutSpecialUpFunc(keyRelease);
     glutReshapeFunc(myReshape);
-    glutTimerFunc(TIME_DELTA, myTimer, 0);
+    glutTimerFunc(TIME_DELTA, myMenuTimer, 0);
     glClearColor(0.0, 0.0, 0.0, 1.0);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
@@ -147,19 +147,22 @@ myDisplay()
 
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glLoadIdentity();
-
     drawShip(&ship);
 
-    for (i=0; i<MAX_PHOTONS; i++)
+    for (i=0; i<MAX_PHOTONS; i++){
     	if (photons[i].active){
             drawPhoton(&photons[i]);
         }
+    }
 
-    for (i=0; i<MAX_ASTEROIDS; i++)
-    	if (asteroids[i].active)
-            drawAsteroid(&asteroids[i]);
-    
+    if(started){
+        for (i=0; i<MAX_ASTEROIDS; i++){
+        	if (asteroids[i].active){
+                drawAsteroid(&asteroids[i]);
+            }
+        }
+    }
+        
     glutSwapBuffers();
 }
 
@@ -173,10 +176,11 @@ myTimer(int value)
     debug();
     updatePhotons();
     processUserInput();
-    advanceShip();
+    updateShip();
     spawnAsteroids();
     advanceAsteroids();
     checkPhotonAsteroidCollision();
+    checkShipAsteroidCollision();
 
     glutPostRedisplay();
     
@@ -198,20 +202,52 @@ myPauseTimer(int value){
 }
 
 void
+myMenuTimer(int value){
+    if(started){
+        glutTimerFunc(TIME_DELTA, myTimer, value);
+    } else {
+        debug();
+        updatePhotons();
+        processUserInput();
+        updateShip();
+
+        glutPostRedisplay();
+
+        glutTimerFunc(TIME_DELTA, myMenuTimer, value);
+    }
+}
+
+void
 myKey(unsigned char key, int x, int y) {
     /*
      *  keyboard callback function; add code here for firing the laser,
      *  starting and/or pausing the game, etc.
      */
-    switch(key) {
-        case ' ':
-            initPhoton(); break;
-        case 'q':
-            exit(0); break;
-        case 'c':
-            resetAsteroidShape(); break;
-        case 'p':
-            pause = abs(pause - 1); break;
+    if(started){
+        switch(key) {
+            case ' ':
+                if(ship.status && !pause){ 
+                    // ship can only shoot if it is "alive"
+                    initPhoton();
+                } 
+                break;
+            case 'q':
+                exit(0); break;
+            case 'c':
+                resetAsteroidShape(); break;
+            case 'p':
+                pause = abs(pause - 1); break;
+        }
+
+    } else {
+        switch(key) {
+            case 's':
+                started = 1; break;
+            case ' ':
+                initPhoton(); break;
+            case 'q':
+                exit(0); break;
+        }
     }
 }
 
@@ -222,15 +258,17 @@ keyPress(int key, int x, int y) {
      *  interested in the cursor keys only
      */
 
-    switch (key) {
-        case 100:
-            left = 1; break;
-        case 101:
-            up = 1; break;
-        case 102:
-            right = 1; break;
-        case 103:
-            down = 1; break;
+    if(ship.status){
+        switch (key) {
+            case 100:
+                left = 1; break;
+            case 101:
+                up = 1; break;
+            case 102:
+                right = 1; break;
+            case 103:
+                down = 1; break;
+        }
     }
 }
 
@@ -286,7 +324,9 @@ debug() {
         printf("ship coords: (%.3f, %.3f)\n", ship.x, ship.y);
         printf("direction: %.3f\n", ship.phi);
         printf("dx: %.4f\n", ship.dx);
-        printf("dy: %.4f\n\n", ship.dy);
+        printf("dy: %.4f\n", ship.dy);
+
+        printf("xMax: %.3f     yMax: %.3f\n", xMax, yMax);
 
         int i, numActiveAsteroids = 0;
         for(i = 0; i < MAX_ASTEROIDS; i++){
@@ -297,13 +337,7 @@ debug() {
 
         printf("numActiveAsteroids: %d\n", numActiveAsteroids);
 
-        /*if(numActiveAsteroids == 7){
-            Asteroid ia = asteroids[inactive];
-            printf("inactive asteroid stats -   x: %.3f    y: %.3f    dx: %.3f    dy: %.3f    radius: %.3f\n", ia.x, ia.y, ia.dx, ia.dy, ia.radius);
-        }*/
-
         printf("\n\n");
-
         timer -= 3000;
     }
 }
@@ -368,20 +402,51 @@ processUserInput() {
  *  within the bounds of the screen when it leaves.
  */
 void 
-advanceShip(){
+updateShip(){
+    
+    if(ship.status == 0){
+        // ship has been destroyed and is waiting to respawn
+        respawnTimer += TIME_DELTA;
+
+        if(respawnTimer >= 3000){
+            respawnTimer = 0;
+            ship.status = 2;
+        }
+
+    } else if(ship.status == 2){
+        // ship is invincible
+        respawnTimer += TIME_DELTA;
+        if (respawnTimer >= 4000){
+            // ship has been respawned for a while so take away invincibility
+            respawnTimer = 0;
+            ship.status = 1;
+        }
+    }
+
+    // update x and y center coordinates
     ship.x += ship.dx*TIME_DELTA;
     ship.y += ship.dy*TIME_DELTA;
 
     // check if ship left the screen
     if (!isInBounds(ship.x, ship.y)){
-        // set the ship's new position on the screen dependent on its velocity
-
-        // ship is out of the screen so we need to get an approximation of its coordinates within the screen
+        // ship is out of the screen. Need to reset the ship on the opposite side of the screen
         double newCoords[2];
         raycastForNewCoordinates(ship.x, ship.y, ship.dx, ship.dy, newCoords);
 
         ship.x = newCoords[0];
         ship.y = newCoords[1];
+    }
+
+    // update the 3 vertices that make up the ship
+    float thetas[3];
+    thetas[0] = (0.0f + ship.phi) * DEG2RAD;
+    thetas[1] = (135.0f + ship.phi) * DEG2RAD;
+    thetas[2] = (225.0f + ship.phi) * DEG2RAD;
+
+    int i;
+    for(i = 0; i < 3; i++){
+        ship.coords[i].x = ship.x + (ship.radius * cos(thetas[i]));
+        ship.coords[i].y = ship.y + (ship.radius * sin(thetas[i]));
     }
 }
 
@@ -411,7 +476,7 @@ updatePhotons(){
 
 void
 spawnAsteroids(){
-    // find out if there are any active asteroids currently
+    // determine the number of active asteroids on the screen
     int i, numActiveAsteroids = 0;
     for (i = 0; i < MAX_ASTEROIDS; i++){
         if (asteroids[i].active){
@@ -419,8 +484,7 @@ spawnAsteroids(){
         }
     }
 
-    if (numActiveAsteroids == 0 || (numActiveAsteroids < MAX_ASTEROIDS && myRandom(0.0, 1.0) < SPAWN_ASTEROID_PROB)){
-        
+    if (numActiveAsteroids == 0 || (numActiveAsteroids < (MAX_ASTEROIDS-3) && myRandom(0.0, 1.0) < SPAWN_ASTEROID_PROB)){
         Asteroid newAsteroid;
 
         for (i = 0; i < MAX_ASTEROIDS; i++){
@@ -457,9 +521,9 @@ spawnAsteroids(){
                 break;
         }
 
-        printf("Spawning an asteroid\nspawnSide: %i\nspawnX: %.3f    spawnY: %.3f\n", spawnSide, spawnX, spawnY);
+        printf("Spawning an asteroid\nspawnSide: %i\nspawnX: %.3f    spawnY: %.3f\n\n", spawnSide, spawnX, spawnY);
 
-        initAsteroid(&newAsteroid, spawnX, spawnY, 2.0);
+        initAsteroid(&newAsteroid, spawnX, spawnY, 2.2);
         asteroids[i] = newAsteroid;
     }
 }
@@ -489,47 +553,43 @@ advanceAsteroids(){
                 a.y = yMax;
             }
 
-            /*int j;
-            for (j = 0; j < a.nVertices; j++){
-                a.coords[j].x += a.dx*TIME_DELTA;
-                a.coords[j].y += a.dy*TIME_DELTA;
-            }*/
-
             asteroids[i] = a;
         }
     }
 }
 
+void 
+destroyAndResetShip(){
+    ship.status = 0;
+    ship.x = 66.66;
+    ship.y = 50.0;
+    ship.dx = 0.000000;
+    ship.dy = 0.000000;
+    ship.phi = 90.00000;
+}
 
 /* ============================================= Drawing Functions ========================================= */
 
 void
 drawShip(Ship *s) {
-
-    float xVertex, yVertex;
-    float t1 = (0.0f+s->phi) * DEG2RAD, 
-          t2 = (135.0f+s->phi) * DEG2RAD, 
-          t3 = (225.0f+s->phi) * DEG2RAD; 
+    int i;
+    glLoadIdentity();
 
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glBegin(GL_LINE_LOOP);
-    xVertex = s->x + (s->radius * cos(t1));
-    yVertex = s->y + (s->radius * sin(t1));
-    glVertex2f(xVertex, yVertex);
 
-    xVertex = s->x + (s->radius * cos(t2));
-    yVertex = s->y + (s->radius * sin(t2));
-    glVertex2f(xVertex, yVertex);
-
-    xVertex = s->x + (s->radius * cos(t3));
-    yVertex = s->y + (s->radius * sin(t3));
-    glVertex2f(xVertex, yVertex);
+    if(s->status == 1 || s->status == 2 && respawnTimer % (TIME_DELTA*12) < (TIME_DELTA*6)){
+        for (i = 0; i < 3; i++){
+            glVertex2f(s->coords[i].x, s->coords[i].y);
+        }
+    }
 
     glEnd();
 }
 
 void
 drawPhoton(Photon *p) {
+    glLoadIdentity();
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glBegin(GL_LINES);
     glVertex2f(p->x1, p->y1);
@@ -568,7 +628,7 @@ init()
      */
 
     /** initialize ship **/
-    ship.x = 70.0;
+    ship.x = 66.66;
     ship.y = 50.0;
     ship.dx = 0.0;
     ship.dy = 0.0;
@@ -576,18 +636,15 @@ init()
     ship.radius = 2.5;
     ship.acceleration = 0.00002;
     ship.turnSpeed = 3.4;
+    ship.status = 1;
 }
 
 void
-initAsteroid(
-    Asteroid *a,
-    double x, double y, double size)
-{
+initAsteroid(Asteroid *a, double x, double y, double size) {
     /*
      *  generate an asteroid at the given position; velocity, rotational
      *  velocity, and shape are generated randomly; size serves as a scale
-     *  parameter that allows generating asteroids of different sizes; feel
-     *  free to adjust the parameters according to your needs
+     *  parameter that allows generating asteroids of different sizes;
      */
 
     double  theta, r;
@@ -611,7 +668,7 @@ initAsteroid(
            a->coords[i].y = r*cos(theta);
         }
     } else {
-        a->radius = size * 2.0;                             // todo fix this when implementing real asteroids
+        a->radius = size * 2.0;          
         for (i=0; i<a->nVertices; i++) {
            theta = 2.0*M_PI*i/a->nVertices;
            r = size*myRandom(2.0, 3.0);
@@ -683,14 +740,14 @@ raycastForNewCoordinates(double x, double y, double dx, double dy, double * newC
     double reEnterX = clamp(x, 0.0, xMax);
     double reEnterY = clamp(y, 0.0, yMax);
 
-    // perform a raycast of the opposite of the object's current velocity. When the ray goes out of the screen, 
+    // perform a raycast using the opposite of the object's current velocity. When the ray goes out of the screen, 
     // this gives an approximation of where the object should re-enter 
     while (isInBounds(reEnterX, reEnterY)){
         reEnterX -= dx*2;
         reEnterY -= dy*2;
     }
 
-    // clamp the approximated values to within the screen
+    // clamp the re-entry values to be within the screen's bounds
     newCoords[0] = clamp(reEnterX, 0.0, xMax);
     newCoords[1] = clamp(reEnterY, 0.0, yMax);
 }
@@ -738,9 +795,31 @@ checkPhotonAsteroidCollision(){
     }
 }
 
+void
+checkShipAsteroidCollision(){
+    int asteroidIndex, shipVertexIndex;
+    for(asteroidIndex = 0; asteroidIndex < MAX_ASTEROIDS; asteroidIndex++){
+        if(asteroids[asteroidIndex].active && ship.status == 1){
+            for(shipVertexIndex = 0; shipVertexIndex < 3; shipVertexIndex++){
+                Asteroid a = asteroids[asteroidIndex];
+
+                double xPow = pow((ship.coords[shipVertexIndex].x - a.x), 2);
+                double yPow = pow((ship.coords[shipVertexIndex].y - a.y), 2);
+                double r2 = pow(a.radius, 2);
+
+                if(xPow + yPow <= r2){
+                    // there was a collision between the ship and this asteroid
+                    destroyAndResetShip();
+                    break;
+                } 
+            }
+        }
+    }
+}
+
 void 
 resetAsteroidShape(){
-    // change value from 0 -> 1 or from 1 -> 0 and reset asteroids
+    // change value from 0 -> 1 or from 1 -> 0 and clear asteroids
     circularAsteroids = abs(circularAsteroids - 1); 
     int i;
     for (i = 0; i < MAX_ASTEROIDS; i ++){
