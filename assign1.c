@@ -560,6 +560,10 @@ advanceAsteroids(){
 
 void 
 destroyAndResetShip(){
+    left = 0;
+    right = 0;
+    up = 0;
+    down = 0;
     ship.status = 0;
     ship.x = 66.66;
     ship.y = 50.0;
