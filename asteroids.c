@@ -1,12 +1,3 @@
-/*
- *  Asteroids 
- *
- *  Noah Attwood
- *  B00718872
- *  CSCI 3161
- *  Summer 2018 
- */
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -220,8 +211,7 @@ myMenuTimer(int value){
 void
 myKey(unsigned char key, int x, int y) {
     /*
-     *  keyboard callback function; add code here for firing the laser,
-     *  starting and/or pausing the game, etc.
+     *  keyboard callback function
      */
     if(started){
         switch(key) {
@@ -347,25 +337,25 @@ debug() {
  */
 void 
 processUserInput() {
-    if (right == 1){
+    if (right){
         ship.phi -= ship.turnSpeed;
         if (ship.phi < 0.0){
             ship.phi += 360.0;
         }
     }
 
-    if (left == 1){
+    if (left){
         ship.phi += ship.turnSpeed;
         if (ship.phi > 360.0){
             ship.phi -= 360.0;
         }
     }
 
-    if (up == 1 || down == 1){
+    if (up || down){
         double newDx;
         double newDy;
 
-        if (up == 1){
+        if (up){
             // up velocity calculation
             newDx = ship.dx - (ship.acceleration * sin((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
             newDy = ship.dy + (ship.acceleration * cos((ship.phi - 90.0) * DEG2RAD) * TIME_DELTA);
